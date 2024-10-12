@@ -460,7 +460,7 @@ class Foil:
   
         splineO.deleteMe()                 
         splineU.deleteMe()
-        sketchT.deleteMe()
+        #sketchT.deleteMe()
 
 
         # avoide dublette at nose        
@@ -473,6 +473,26 @@ class Foil:
         
         if gap == 0:
             spline.isClosed = True
+
+        point1 = spline.fitPoints.item(pointsM_O.count -1)
+        point2 = (sketchM.project(line_sehne.endSketchPoint)).item(0)
+        linetest = sketchM.sketchCurves.sketchLines.addByTwoPoints(point1, point2)
+        linetest.isFixed = True
+
+
+        handle = spline.getTangentHandle(spline.fitPoints.item(pointsM_O.count -1))
+        chandle = spline.getCurvatureHandle(spline.fitPoints.item(pointsM_O.count -1))
+        #chandle.deleteMe()
+       
+        
+        handle = spline.activateTangentHandle(spline.fitPoints.item(pointsM_O.count -1))
+        handle.isFixed = False
+
+
+        sketchM.geometricConstraints.addPerpendicular(handle, linetest)
+        #handle.deleteMe()
+        handle.isConstruction = True
+        
              
 
 
