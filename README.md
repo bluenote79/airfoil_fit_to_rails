@@ -1,6 +1,6 @@
 # airfoil_fit_to_rails
 
-## This skript imports airfoil coordinates from a dat-file to Fusion 360. It creates a sketch on a selected plane, fitting selected rails for lofting. 
+## This skript imports airfoil coordinates from a dat-file to Fusion 360. It creates a sketch on a selected plane, fitting the airfoil to selected rails for lofting. 
 
 **Install:**
 1. In Fusion 360 go to Utilities > ADD-INS > Skripts and Add-Ins.
