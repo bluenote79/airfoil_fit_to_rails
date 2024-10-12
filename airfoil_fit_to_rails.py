@@ -479,18 +479,13 @@ class Foil:
         linetest = sketchM.sketchCurves.sketchLines.addByTwoPoints(point1, point2)
         linetest.isFixed = True
 
-
+        # make curve tangent at the nose
         handle = spline.getTangentHandle(spline.fitPoints.item(pointsM_O.count -1))
         chandle = spline.getCurvatureHandle(spline.fitPoints.item(pointsM_O.count -1))
-        #chandle.deleteMe()
-       
-        
         handle = spline.activateTangentHandle(spline.fitPoints.item(pointsM_O.count -1))
         handle.isFixed = False
 
-
         sketchM.geometricConstraints.addPerpendicular(handle, linetest)
-        #handle.deleteMe()
         handle.isConstruction = True
         
              
