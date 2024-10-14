@@ -1,5 +1,6 @@
 """
 This skript imports airfoils to fusion 360 fits them to rails for lofting. The trailing edge can be opened for a gap by rotating the top and bottom around the nose.
+author: bluenote79
 
 """
 
@@ -10,16 +11,19 @@ import os.path
 import math
 
 COMMAND_ID = "Airfoil"
-SE01_SELECTION_INPUT_ID = "rail nose"
-SE02_SELECTION_INPUT_ID = "rail tail"
-SE04_SELECTION_INPUT_ID = "sketch plane"
-I0_VALUE_ID = "tail gap"
-I0_VALUE_NAME = "tail gap"
-C0_CHECKBOX_ID = "mirror"
-D1_DROPDOWN_ID = "horizontal axis"
-D1_DROPDOWN_NAME = "horizontal axis"
-D2_DROPDOWN_ID = "vertical axis"
-D2_DROPDOWN_NAME = "vertical axis"
+SE01_SELECTION_INPUT_ID = "Schiene Nasenleiste"
+SE02_SELECTION_INPUT_ID = "Schiene Endleiste"
+SE04_SELECTION_INPUT_ID = "Projektionsebene"
+I0_VALUE_ID = "Endleistendicke"
+I0_VALUE_NAME = "Endleistendicke"
+C0_CHECKBOX_ID = "spiegeln"
+D1_DROPDOWN_ID = "horizontale Axe"
+D1_DROPDOWN_NAME = "horizontale Axe"
+D2_DROPDOWN_ID = "vertikale Axe"
+D2_DROPDOWN_NAME = "vertikale Axe"
+C1_CHECKBOX_ID = "Profil an der Nasenleiste trennen"
+C2_CHECKBOX_ID = "Bei 0 mm manuell reparieren"
+C3_CHECKBOX_ID = "Tangentenhantel vertikal"
 
 _handlers = []
 _user_parameters = {}
@@ -51,6 +55,9 @@ class FoilCommandExecuteHandler(adsk.core.CommandEventHandler):
                 in3 = inputs.itemById(C0_CHECKBOX_ID)
                 in7 = inputs.itemById(D1_DROPDOWN_ID)
                 in8 = inputs.itemById(D2_DROPDOWN_ID)
+                in9 = inputs.itemById(C1_CHECKBOX_ID)
+                in10 = inputs.itemById(C2_CHECKBOX_ID)
+                in11 = inputs.itemById(C3_CHECKBOX_ID)
 
                 entities_nose = []
                 entities_tail = []           
@@ -76,7 +83,7 @@ class FoilCommandExecuteHandler(adsk.core.CommandEventHandler):
                     ui.messageBox('Failed:\n{}'.format(traceback.format_exc()))
     
             foil = Foil()
-            foil.Execute(in2.value, in3.value, entities_nose, entities_tail, inputs.itemById(SE04_SELECTION_INPUT_ID).selection(0).entity, in7.selectedItem.name, in8.selectedItem.name)
+            foil.Execute(in2.value, in3.value, entities_nose, entities_tail, inputs.itemById(SE04_SELECTION_INPUT_ID).selection(0).entity, in7.selectedItem.name, in8.selectedItem.name, in9.value, in10.value, in11.value)
 
 
         except:
@@ -98,7 +105,7 @@ class FoilCommandDestroyHandler(adsk.core.CommandEventHandler):
 
 
 class Foil:
-    def Execute(self, gap, mirror, splinenose, splinetail, planesel, x_axis_c, y_axis_c):
+    def Execute(self, gap, mirror, splinenose, splinetail, planesel, x_axis_c, y_axis_c, breakcurve, repairm, tangency):
             
         sketchT = sketches.add(planesel)
         try:
@@ -289,7 +296,7 @@ class Foil:
             dimN[-1].parameter.name = "rootU" + str(suf)
         else:
             rootlineO = linexN
-            rootlineU = rootlineO        #                            linexN
+            rootlineU = rootlineO
       
 
         # get airfoil data and create final sketch
@@ -462,7 +469,6 @@ class Foil:
         splineU.deleteMe()
         #sketchT.deleteMe()
 
-
         # avoide dublette at nose        
         for i in range(1, pointsM_OU.count - 2):
             if pointsM_OU.item(i).isEqualTo(pointsM_OU.item(i+1)):
@@ -470,24 +476,44 @@ class Foil:
 
         # one whole spline
         spline = sketchM.sketchCurves.sketchFittedSplines.add(pointsM_OU)
-        
         if gap == 0:
-            spline.isClosed = True
+            spline.isClosed = False
 
         point1 = spline.fitPoints.item(pointsM_O.count -1)
         point2 = (sketchM.project(line_sehne.endSketchPoint)).item(0)
         linetest = sketchM.sketchCurves.sketchLines.addByTwoPoints(point1, point2)
         linetest.isFixed = True
 
-        # make curve tangent at the nose
+
         handle = spline.getTangentHandle(spline.fitPoints.item(pointsM_O.count -1))
         chandle = spline.getCurvatureHandle(spline.fitPoints.item(pointsM_O.count -1))
+        
         handle = spline.activateTangentHandle(spline.fitPoints.item(pointsM_O.count -1))
         handle.isFixed = False
 
-        sketchM.geometricConstraints.addPerpendicular(handle, linetest)
-        handle.isConstruction = True
+        if tangency == True:
+            sketchM.geometricConstraints.addPerpendicular(handle, linetest)
         
+        handle.isConstruction = True
+
+        if gap == 0:
+            if repairm == False:
+                spline.addFitPoint(0.99999)
+                sketchM.geometricConstraints.addCoincident(spline.endSketchPoint, linetest.endSketchPoint)
+        
+        if breakcurve == True:
+            new_spline = spline.breakCurve(pointsM_OU.item(pointsM_O.count -2))
+            new_spline0 = sketchM.sketchCurves.item(sketchM.sketchCurves.count -2)
+            new_spline1 = sketchM.sketchCurves.item(sketchM.sketchCurves.count -1)
+
+            sketchM.geometricConstraints.addCoincident(new_spline1.endSketchPoint, linetest.endSketchPoint)
+
+        else:
+            pass    
+        
+      
+        
+
              
 
 
@@ -689,24 +715,33 @@ class FoilCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             tabCmdInput1 = inputs.addTabCommandInput('tab_1', 'Settings')
             tab1ChildInputs = tabCmdInput1.children
 
-            i1 = tab1ChildInputs.addSelectionInput(SE01_SELECTION_INPUT_ID, SE01_SELECTION_INPUT_ID, "select nose rail")
+
+            groupCmdInput = tab1ChildInputs.addGroupCommandInput('group', 'Auswahl der Splines und Projektionsebene:')
+            groupCmdInput.isExpanded = True
+            groupCmdInput.isEnabledCheckBoxDisplayed = False
+            groupChildInputs = groupCmdInput.children
+
+            i1 = groupChildInputs.addSelectionInput(SE01_SELECTION_INPUT_ID, SE01_SELECTION_INPUT_ID, "Schiene Nasenleiste")
             i1.addSelectionFilter(adsk.core.SelectionCommandInput.SketchCurves)
-            i2 = tab1ChildInputs.addSelectionInput(SE02_SELECTION_INPUT_ID, SE02_SELECTION_INPUT_ID, "select nose rail")
+            i2 = groupChildInputs.addSelectionInput(SE02_SELECTION_INPUT_ID, SE02_SELECTION_INPUT_ID, "Schiene Endleiste")
             i2.addSelectionFilter(adsk.core.SelectionCommandInput.SketchCurves)
-            i5 = tab1ChildInputs.addSelectionInput(SE04_SELECTION_INPUT_ID, SE04_SELECTION_INPUT_ID, "select plane")
+            i5 = groupChildInputs.addSelectionInput(SE04_SELECTION_INPUT_ID, SE04_SELECTION_INPUT_ID, "Projektionsebene")
             i5.addSelectionFilter(adsk.core.SelectionCommandInput.ConstructionPlanes)
 
-            i2 = tab1ChildInputs.addValueInput(I0_VALUE_ID, I0_VALUE_NAME, "mm", adsk.core.ValueInput.createByReal(0.05))
-            i3 = tab1ChildInputs.addBoolValueInput(C0_CHECKBOX_ID, C0_CHECKBOX_ID, True, "", False)
+            
+            groupCmdInput2 = tab1ChildInputs.addGroupCommandInput('group', 'Ausrichtung:')
+            groupCmdInput2.isExpanded = True
+            groupCmdInput2.isEnabledCheckBoxDisplayed = False
+            groupChildInputs2 = groupCmdInput2.children
 
-            dropdownInput1 = tab1ChildInputs.addDropDownCommandInput(D1_DROPDOWN_ID, D1_DROPDOWN_NAME, adsk.core.DropDownStyles.TextListDropDownStyle)
+            dropdownInput1 = groupChildInputs2.addDropDownCommandInput(D1_DROPDOWN_ID, D1_DROPDOWN_NAME, adsk.core.DropDownStyles.TextListDropDownStyle)
             dropdown_items1 = dropdownInput1.listItems
             dropdownInput1.maxVisibleItems = 6
             dropdownInput1.isFullWidth
             dropdown_items1.add("in flight direction", True, '')
             dropdown_items1.add("against flight direction", False, '')
 
-            dropdownInput2 = tab1ChildInputs.addDropDownCommandInput(D2_DROPDOWN_ID, D2_DROPDOWN_NAME, adsk.core.DropDownStyles.LabeledIconDropDownStyle)
+            dropdownInput2 = groupChildInputs2.addDropDownCommandInput(D2_DROPDOWN_ID, D2_DROPDOWN_NAME, adsk.core.DropDownStyles.LabeledIconDropDownStyle)
             dropdown_items2 = dropdownInput2.listItems
             dropdownInput2.maxVisibleItems = 6
             dropdownInput2.isFullWidth
@@ -714,6 +749,25 @@ class FoilCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             dropdown_items2.add("red down", False, 'resources/Reddown')
             dropdown_items2.add("green up", True, 'resources/Greenup')
             dropdown_items2.add("green down", False, 'resources/Greendown')
+
+            i3 = groupChildInputs2.addBoolValueInput(C0_CHECKBOX_ID, C0_CHECKBOX_ID, True, "", False)
+
+            groupCmdInput3 = tab1ChildInputs.addGroupCommandInput('group', 'Nasenleiste:')
+            groupCmdInput3.isExpanded = True
+            groupCmdInput3.isEnabledCheckBoxDisplayed = False
+            groupChildInputs3 = groupCmdInput3.children
+
+            i4 = groupChildInputs3.addBoolValueInput(C1_CHECKBOX_ID, C1_CHECKBOX_ID, True, "", False)
+            i7 = groupChildInputs3.addBoolValueInput(C3_CHECKBOX_ID, C3_CHECKBOX_ID, True, "", True)
+
+            groupCmdInput4 = tab1ChildInputs.addGroupCommandInput('group', 'Endleiste:')
+            groupCmdInput4.isExpanded = True
+            groupCmdInput4.isEnabledCheckBoxDisplayed = False
+            groupChildInputs4 = groupCmdInput4.children
+
+            i2 = groupChildInputs4.addValueInput(I0_VALUE_ID, I0_VALUE_NAME, "mm", adsk.core.ValueInput.createByReal(0.05))
+
+            i6 = groupChildInputs4.addBoolValueInput(C2_CHECKBOX_ID, C2_CHECKBOX_ID, True, "", False)
 
             tabCmdInput2 = inputs.addTabCommandInput('tab_2', 'Help')
             tab2ChildInputs = tabCmdInput2.children
