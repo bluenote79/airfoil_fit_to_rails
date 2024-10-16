@@ -511,7 +511,9 @@ class Foil:
         else:
             pass    
         
-      
+        linetest.isConstruction = True
+        point2.deleteMe()
+        sketchT.deleteMe()  
         
 
              
