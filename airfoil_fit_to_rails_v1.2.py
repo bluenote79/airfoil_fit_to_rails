@@ -227,21 +227,65 @@ class Foil:
             return thickedO, thickedU
       
 
-        
+        def get_coords_nose(coordsO, coordsU):
+            sketchNose = sketches.add(root.xYConstructionPlane)
+            sketchNose.name = "GetNose"
+
+            if coordsO[-1][0] == coordsU[0][0] and coordsO[-1][1] == coordsU[0][1]:
+                del coordsU[0]
+
+            coords = list(coordsO) + list(coordsU)
+            coll = adsk.core.ObjectCollection.create()
+            coll_line = adsk.core.ObjectCollection.create()
+
+            for i in range(len(coords)):
+                point = adsk.core.Point3D.create(coords[i][0], coords[i][1], 0)
+                coll.add(point)
+            
+            spline = sketchNose.sketchCurves.sketchFittedSplines.add(coll)
+            line = sketchNose.sketchCurves.sketchLines.addByTwoPoints(adsk.core.Point3D.create(-0.3, 0, 0), adsk.core.Point3D.create(0.3, 0, 0))
+            coll_line.add(line)
+            
+            intersection = spline.intersections(coll_line)
+   
+            array = intersection[2][0].asArray()
+            #ui.messageBox(str(array))
+
+            coordsU.insert(0, (array[0], 0))
+            coordsO.append((array[0], 0))
+
+            if array[0] < 0:
+                s = abs(array[0])
+            else:
+                s = - array[0]
+            
+            t = 1 / (1 + array[0])
+                 
+            coordsUn = [((coordsU[i][0] + s) * t, coordsU[i][1], 0) for i in range(len(coordsU))]
+            coordsOn = [((coordsO[i][0] + s) * t, coordsO[i][1], 0) for i in range(len(coordsO))]
+
+            sketchNose.deleteMe()
+
+            return coordsOn, coordsUn
+
+
         
         airfoils = AirfoilC()
         if dicke == 1:
-            coords_o, coords_u, tang = airfoils.coords_split_move()
+            coords_o, coords_u, selforigin, selfrotated = airfoils.coords_split_move()
 
         else:
-            coordsc_o, coordsc_u, tang = airfoils.coords_split_move()
+            coordsc_o, coordsc_u, selforigin, selfrotated = airfoils.coords_split_move()
             coords_o, coords_u = draw_spline_on_testsketch(coordsc_o, coordsc_u, dicke, interpolationspunkte)
 
-        if tang is False:
+        if selforigin is True or selfrotated is True:
             tangency = False
-            ui.messageBox("Das Profil besitzt keine Koordinate im Ursprung (0,0), der Punkt mit dem kleinsten x-Wert wird dorthin verschoben, die vertikale Tangentenhantel dort deaktiviert")
 
-        
+        if selforigin is False:
+            cO, cU = get_coords_nose(coords_o, coords_u)
+            coords_o = cO
+            coords_u = cU
+
         sketchT = sketches.add(planesel)
         try:
             sketchEntities1 = sketchT.intersectWithSketchPlane(splinenose)
@@ -949,6 +993,7 @@ class AirfoilC:
 
     def __init__(self):
         self.origin = True
+        self.rotated = False
         self.filename = self.get_input_filename()
         self.profile = self.get_profile()
         self.top_coords = []
@@ -1066,18 +1111,34 @@ class AirfoilC:
     def coords_split_move(cls):
         x_values, y_values = map(list, zip(*cls.profile))
 
-        # check if x min is (0, 0) otherwise move to origin, derotate and normalize
+        # check if x min is (0, 0) otherwise move to origin, derotate and normalize, if it is not sth like s3002
         nose_index = x_values.index(min(x_values))
         cls.top_coords = cls.profile[0:nose_index + 1]
         cls.bottom_coords = cls.profile[nose_index:]
 
+        if float(cls.bottom_coords[0][0]) != 0 or float(cls.bottom_coords[0][1]) != 0:
+            if float(cls.bottom_coords[1][1]) < 0 and float(cls.top_coords[-2][1]) > 0: # S3002 type no nose point given
+                ui.messageBox("Das Profil besitzt keinen Punkt (0,0), keine vertikale Tangente an der Nase!")
+                cls.origin = False
+                cls.rotated = False
+            else: # AG35 type with x min as Nosepoint
+                ui.messageBox("Das Profil wird derotiert!")
+                cls.rotated = True
+                cls.origin = True
+                cls.move()
+                cls.derotate()
+                cls.normalize()
+
+        """
         if float(cls.bottom_coords[-1][0]) != 0 or float(cls.bottom_coords[-1][1]) != 0:
             cls.origin = False
             cls.move()
             cls.derotate()
             cls.normalize()
 
-        return cls.top_coords, cls.bottom_coords, cls.origin
+        """
+
+        return cls.top_coords, cls.bottom_coords, cls.origin, cls.rotated
 
     
     @classmethod
