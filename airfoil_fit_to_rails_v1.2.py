@@ -259,7 +259,7 @@ class Foil:
             else:
                 s = - array[0]
             
-            t = 1 / (1 + array[0])
+            t = 1 / (1 + s)
                  
             coordsUn = [((coordsU[i][0] + s) * t, coordsU[i][1], 0) for i in range(len(coordsU))]
             coordsOn = [((coordsO[i][0] + s) * t, coordsO[i][1], 0) for i in range(len(coordsO))]
