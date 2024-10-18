@@ -155,7 +155,7 @@ class Foil:
             normal.isClosed = False
 
             splines = normal.breakCurve(points.item(breakpoint))
-            ui.messageBox(str(splines.count))
+            #ui.messageBox(str(splines.count))
             # fix tail
             splines.item(1).addFitPoint(0.99999)
             sketchChamber.geometricConstraints.addCoincident(splines.item(1).endSketchPoint, splines.item(0).startSketchPoint)
@@ -271,18 +271,20 @@ class Foil:
 
         
         airfoils = AirfoilC()
-        if dicke == 1:
-            coords_o, coords_u, selforigin, selfrotated = airfoils.coords_split_move()
-
-        else:
-            coordsc_o, coordsc_u, selforigin, selfrotated = airfoils.coords_split_move()
-            coords_o, coords_u = draw_spline_on_testsketch(coordsc_o, coordsc_u, dicke, interpolationspunkte)
-
+        
+        coords_o, coords_u, selforigin, selfrotated = airfoils.coords_split_move()
+        coords_o, coords_u, selforigin, selfrotated = airfoils.coords_split_move()
+        
         if selforigin is True or selfrotated is True:
             tangency = False
 
         if selforigin is False:
             cO, cU = get_coords_nose(coords_o, coords_u)
+            coords_o = cO
+            coords_u = cU
+            
+        if dicke != 1:
+            cO, cU = draw_spline_on_testsketch(coords_o, coords_u, dicke, interpolationspunkte)
             coords_o = cO
             coords_u = cU
 
