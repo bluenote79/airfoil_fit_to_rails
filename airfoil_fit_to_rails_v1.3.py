@@ -24,8 +24,7 @@ D1_DROPDOWN_NAME = "horizontale Axe"
 D2_DROPDOWN_ID = "vertikale Axe"
 D2_DROPDOWN_NAME = "vertikale Axe"
 C1_CHECKBOX_ID = "Profil an der Nasenleiste trennen"
-C2_CHECKBOX_ID = "Bei 0 mm manuell reparieren"
-C3_CHECKBOX_ID = "Tangentenhantel vertikal"
+C2_CHECKBOX_ID = "Tangentenhantel vertikal"
 I1_VALUE_ID = "Faktor Profilaufdickung"
 I1_VALUE_NAME = "Faktor Profilaufdickung"
 I2_VALUE_ID = "Anzahl Interpolationspunkte"
@@ -35,7 +34,7 @@ I2_VALUE_NAME = "Anzahl Interpolationspunkte"
 _handlers = []
 _user_parameters = {}
 
-global airfoildata, airfoildatad, top_coords, bottom_coords, name
+global airfoildata, top_coords, bottom_coords, name
 
 ui = None
 app = adsk.core.Application.get()
@@ -55,7 +54,7 @@ class FoilCommandInputChangedHandler(adsk.core.InputChangedEventHandler):
 
     def notify(self, args):
 
-        global airfoildata, airfoildatad, top_coords, bottom_coords, name
+        global airfoildata, top_coords, bottom_coords, name
 
         try:
             eventArgs = adsk.core.InputChangedEventArgs.cast(args)
@@ -108,8 +107,7 @@ class FoilCommandExecuteHandler(adsk.core.CommandEventHandler):
                 in7 = inputs.itemById(D1_DROPDOWN_ID)
                 in8 = inputs.itemById(D2_DROPDOWN_ID)
                 in9 = inputs.itemById(C1_CHECKBOX_ID)
-                in10 = inputs.itemById(C2_CHECKBOX_ID)
-                in11 = inputs.itemById(C3_CHECKBOX_ID)
+                in11 = inputs.itemById(C2_CHECKBOX_ID)
                 in12 = inputs.itemById(I1_VALUE_ID)
                 in13 = inputs.itemById(I2_VALUE_ID)
 
@@ -146,7 +144,6 @@ class FoilCommandExecuteHandler(adsk.core.CommandEventHandler):
                 in7.selectedItem.name,
                 in8.selectedItem.name,
                 in9.value,
-                in10.value,
                 in11.value,
                 in12.value,
                 in13.value,
@@ -180,7 +177,6 @@ class Foil:
         x_axis_c,
         y_axis_c,
         breakcurve,
-        repairm,
         tangency,
         dicke,
         interpolationspunkte,
@@ -579,8 +575,7 @@ class Foil:
         handle.isConstruction = True
 
         if gap == 0:
-            if repairm == False:
-                spline.addFitPoint(0.99999)
+            spline.addFitPoint(0.99999)
 
         if breakcurve == True:
             line_sehne.isConstruction = False
@@ -858,7 +853,7 @@ class FoilCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             groupChildInputs3 = groupCmdInput3.children
 
             groupChildInputs3.addBoolValueInput(C1_CHECKBOX_ID, C1_CHECKBOX_ID, True, "", False)
-            groupChildInputs3.addBoolValueInput(C3_CHECKBOX_ID, C3_CHECKBOX_ID, True, "", True)
+            groupChildInputs3.addBoolValueInput(C2_CHECKBOX_ID, C2_CHECKBOX_ID, True, "", True)
 
             groupCmdInput4 = tab1ChildInputs.addGroupCommandInput("group", "Endleiste:")
             groupCmdInput4.isExpanded = True
@@ -867,10 +862,8 @@ class FoilCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
 
             groupChildInputs4.addValueInput(I0_VALUE_ID, I0_VALUE_NAME, "mm", adsk.core.ValueInput.createByReal(0.05))
 
-            groupChildInputs4.addBoolValueInput(C2_CHECKBOX_ID, C2_CHECKBOX_ID, True, "", False)
-
-            groupCmdInput5 = tab1ChildInputs.addGroupCommandInput("group", "Profilaufdickung (BETA):")
-            groupCmdInput5.isExpanded = True
+            groupCmdInput5 = tab1ChildInputs.addGroupCommandInput("group", "Profilaufdickung:")
+            groupCmdInput5.isExpanded = False
             groupCmdInput5.isEnabledCheckBoxDisplayed = False
             groupChildInputs5 = groupCmdInput5.children
 
