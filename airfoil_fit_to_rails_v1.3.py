@@ -102,15 +102,6 @@ class FoilCommandExecuteHandler(adsk.core.CommandEventHandler):
 
             try:
 
-                in2 = inputs.itemById(I0_VALUE_ID)
-                in3 = inputs.itemById(C0_CHECKBOX_ID)
-                in7 = inputs.itemById(D1_DROPDOWN_ID)
-                in8 = inputs.itemById(D2_DROPDOWN_ID)
-                in9 = inputs.itemById(C1_CHECKBOX_ID)
-                in11 = inputs.itemById(C2_CHECKBOX_ID)
-                in12 = inputs.itemById(I1_VALUE_ID)
-                in13 = inputs.itemById(I2_VALUE_ID)
-
                 entities_nose = []
                 entities_tail = []
 
@@ -134,19 +125,23 @@ class FoilCommandExecuteHandler(adsk.core.CommandEventHandler):
                 if ui:
                     ui.messageBox("Failed:\n{}".format(traceback.format_exc()))
 
+            global top_coords, bottom_coords
+
             foil = Foil()
             foil.Execute(
-                in2.value,
-                in3.value,
+                inputs.itemById(I0_VALUE_ID).value,
+                inputs.itemById(C0_CHECKBOX_ID).value,
                 entities_nose,
                 entities_tail,
                 inputs.itemById(SE04_SELECTION_INPUT_ID).selection(0).entity,
-                in7.selectedItem.name,
-                in8.selectedItem.name,
-                in9.value,
-                in11.value,
-                in12.value,
-                in13.value,
+                inputs.itemById(D1_DROPDOWN_ID).selectedItem.name,
+                inputs.itemById(D2_DROPDOWN_ID).selectedItem.name,
+                inputs.itemById(C1_CHECKBOX_ID).value,
+                inputs.itemById(C2_CHECKBOX_ID).value,
+                inputs.itemById(I1_VALUE_ID).value,
+                inputs.itemById(I2_VALUE_ID).value,
+                top_coords,
+                bottom_coords
             )
 
         except:
@@ -180,11 +175,9 @@ class Foil:
         tangency,
         dicke,
         interpolationspunkte,
+        coords_o,
+        coords_u
     ):
-
-        global top_coords, bottom_coords
-        coords_o = top_coords
-        coords_u = bottom_coords
 
         if dicke !=1:
             airfoildatad = AirfoilD(
@@ -560,10 +553,11 @@ class Foil:
         if gap == 0:
             spline.isClosed = False
 
-        gaplineO.deleteMe()
-        gaplineU.deleteMe()
-        rootlineO.deleteMe()
-        rootlineU.deleteMe()
+        if gap != 0:
+            gaplineO.deleteMe()
+            gaplineU.deleteMe()
+            rootlineO.deleteMe()
+            rootlineU.deleteMe()
 
         handle = spline.getTangentHandle(spline.fitPoints.item(pointsM_O.count - 1))
         handle = spline.activateTangentHandle(spline.fitPoints.item(pointsM_O.count - 1))
