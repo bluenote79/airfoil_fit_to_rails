@@ -570,6 +570,7 @@ class Foil:
 
         if gap == 0:
             spline.addFitPoint(0.99999)
+            sketchT.geometricConstraints.addCoincident(spline.endSketchPoint, line_sehne.endSketchPoint)
 
         if breakcurve == True:
             line_sehne.isConstruction = False
