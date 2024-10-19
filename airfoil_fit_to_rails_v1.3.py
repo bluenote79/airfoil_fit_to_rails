@@ -29,10 +29,13 @@ I1_VALUE_ID = "Faktor Profilaufdickung"
 I1_VALUE_NAME = "Faktor Profilaufdickung"
 I2_VALUE_ID = "Anzahl Interpolationspunkte"
 I2_VALUE_NAME = "Anzahl Interpolationspunkte"
+T00_TEXTBOX_ID = "Datei nicht eingelesen"
+T01_TEXTBOX_ID = "Datei eingelesen"
 
 
 _handlers = []
 _user_parameters = {}
+_name = []
 
 global airfoildata, top_coords, bottom_coords, name
 
@@ -46,6 +49,25 @@ design = adsk.fusion.Design.cast(product)
 root = design.rootComponent
 sketches = root.sketches
 planes = root.constructionPlanes
+
+
+def run(context):
+    try:
+
+        cmdDef = ui.commandDefinitions.itemById(COMMAND_ID)
+        if not cmdDef:
+            cmdDef = ui.commandDefinitions.addButtonDefinition(COMMAND_ID, "Airfoil Import", "Airfoil Import")
+        onCommandCreated = FoilCommandCreatedHandler()
+
+        cmdDef.commandCreated.add(onCommandCreated)
+        _handlers.append(onCommandCreated)
+
+        cmdDef.execute()
+        adsk.autoTerminate(False)
+
+    except:
+        if ui:
+            ui.messageBox("Failed:\n{}".format(traceback.format_exc()))
 
 
 class FoilCommandInputChangedHandler(adsk.core.InputChangedEventHandler):
@@ -78,14 +100,17 @@ class FoilCommandInputChangedHandler(adsk.core.InputChangedEventHandler):
 
             # onInputChange for click Button
             if cmdInput.id == B1_BUTTON_ID:
-
+                global _name
                 filename = get_input_filename()
                 name = get_name(filename)
-                airfoildata = AirfoilC(filename, name)
+                airfoildata = AirfoilData(filename, name)
                 airfoildata.get_profile()
                 top_coords = list(airfoildata.top_coords)
                 bottom_coords = list(airfoildata.bottom_coords)
-                ui.messageBox("Profil eingelesen!")
+                inputs.itemById(T01_TEXTBOX_ID).isVisible = False               
+                test = inputs.itemById(T01_TEXTBOX_ID).parentCommandInput.children
+                test.addTextBoxCommandInput("Proil eingelesen", name, "eingelesen!", 1, True)
+                test[-2].isVisible = False
 
         except:
             ui.messageBox("Failed:\n{}".format(traceback.format_exc()))
@@ -127,8 +152,8 @@ class FoilCommandExecuteHandler(adsk.core.CommandEventHandler):
 
             global top_coords, bottom_coords
 
-            foil = Foil()
-            foil.Execute(
+            sketch = AirfoilSketch()
+            sketch.create_sketch(
                 inputs.itemById(I0_VALUE_ID).value,
                 inputs.itemById(C0_CHECKBOX_ID).value,
                 entities_nose,
@@ -141,7 +166,7 @@ class FoilCommandExecuteHandler(adsk.core.CommandEventHandler):
                 inputs.itemById(I1_VALUE_ID).value,
                 inputs.itemById(I2_VALUE_ID).value,
                 top_coords,
-                bottom_coords
+                bottom_coords,
             )
 
         except:
@@ -161,8 +186,617 @@ class FoilCommandDestroyHandler(adsk.core.CommandEventHandler):
                 ui.messageBox("Failed:\n{}".format(traceback.format_exc()))
 
 
-class Foil:
-    def Execute(
+class FoilExecutePreviewHandler(adsk.core.CommandEventHandler):
+    def __init__(self):
+        super().__init__()
+
+    def notify(self, args: adsk.core.CommandEventArgs):
+        # Code to react to the event.
+        app.log("In MyExecutePreviewHandler event handler.")
+
+        try:
+
+            def get_gap_lines(halfgap):
+                inputs = args.command.commandInputs
+                command = args.firingEvent.sender
+                inputs = command.commandInputs
+
+                entities_nose = []
+                entities_tail = []
+
+                entities_nose.append(inputs.itemById(SE01_SELECTION_INPUT_ID).selection(0).entity)
+                entities_tail.append(inputs.itemById(SE02_SELECTION_INPUT_ID).selection(0).entity)
+                plane = inputs.itemById(SE04_SELECTION_INPUT_ID).selection(0).entity
+
+                sketchT = sketches.add(plane)
+
+                sketchEntities1 = sketchT.intersectWithSketchPlane(entities_nose)
+                sketchEntities2 = sketchT.intersectWithSketchPlane(entities_tail)
+
+                if len(sketchEntities1) == 0 or len(sketchEntities2) == 0:
+                    ui.messageBox("At least one rail dos not intersect with the selected plane!")
+
+                for pt in sketchEntities1:
+                    if pt.objectType == adsk.fusion.SketchPoint.classType():
+                        nosep = sketchT.project(pt)
+
+                for pt in sketchEntities2:  # war nicht drin
+                    if pt.objectType == adsk.fusion.SketchPoint.classType():
+                        tailp = sketchT.project(pt)
+
+                line_sehne = sketchT.sketchCurves.sketchLines.addByTwoPoints(nosep.item(0), tailp.item(0))
+                line_sehne.isConstruction = True
+
+                circlecoll_two_circles = adsk.core.ObjectCollection.create()
+                linecoll_centerline = adsk.core.ObjectCollection.create()
+                linecoll_gapline1 = adsk.core.ObjectCollection.create()
+                linecoll_gapline2 = adsk.core.ObjectCollection.create()
+
+                circle1 = sketchT.sketchCurves.sketchCircles.addByCenterRadius(
+                    line_sehne.startSketchPoint.geometry, line_sehne.length
+                )
+                circlecoll_two_circles.add(circle1)
+                circle2 = sketchT.sketchCurves.sketchCircles.addByCenterRadius(
+                    line_sehne.endSketchPoint.geometry, line_sehne.length
+                )
+
+                circle_intersections = circle2.intersections(circlecoll_two_circles)
+                circle_instersection1 = circle_intersections[2][0]
+                circle_instersection2 = circle_intersections[2][1]
+
+                lineytest = sketchT.sketchCurves.sketchLines.addByTwoPoints(
+                    circle_instersection1, circle_instersection2
+                )
+                linecoll_centerline.add(lineytest)
+
+                line_intersections = line_sehne.intersections(linecoll_centerline)
+
+                midpt = line_intersections[2][0]
+                trans_to_tail = midpt.vectorTo(line_sehne.endSketchPoint.geometry)
+
+                point_for_tail1 = lineytest.startSketchPoint.geometry.copy()
+                point_for_tail2 = lineytest.endSketchPoint.geometry.copy()
+
+                point_for_tail1.translateBy(trans_to_tail)
+                point_for_tail2.translateBy(trans_to_tail)
+
+                perpendicular_line1 = sketchT.sketchCurves.sketchLines.addByTwoPoints(
+                    line_sehne.endSketchPoint.geometry, point_for_tail1
+                )
+                linecoll_gapline1.add(perpendicular_line1)
+
+                perpendicular_line2 = sketchT.sketchCurves.sketchLines.addByTwoPoints(
+                    line_sehne.endSketchPoint.geometry, point_for_tail2
+                )
+                linecoll_gapline2.add(perpendicular_line2)
+
+                circle3 = sketchT.sketchCurves.sketchCircles.addByCenterRadius(
+                    line_sehne.endSketchPoint.geometry, halfgap
+                )
+
+                gapline1_endpoint = circle3.intersections(linecoll_gapline1)
+                gapline2_endpoint = circle3.intersections(linecoll_gapline2)
+
+                lineytest.deleteMe()
+                perpendicular_line1.deleteMe()
+                perpendicular_line2.deleteMe()
+                circle1.deleteMe()
+                circle2.deleteMe()
+                circle3.deleteMe()
+
+                gapline1 = sketchT.sketchCurves.sketchLines.addByTwoPoints(
+                    line_sehne.endSketchPoint.geometry, gapline1_endpoint[2][0]
+                )
+                gapline2 = sketchT.sketchCurves.sketchLines.addByTwoPoints(
+                    line_sehne.endSketchPoint.geometry, gapline2_endpoint[2][0]
+                )
+
+                return sketchT
+
+            def show_coordinate_system(sketchT):
+
+                # Koordinatensystem
+                origin = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0, 0))
+                xPoint = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0.4, 0, 0))
+                xPoint2 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0.475, 0, 0))
+                xPoint3 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0.625, 0, 0))
+                xPoint4 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0.7, 0, 0))
+                xPoint5 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(1.1, 0, 0))
+                yPoint = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0.4, 0))
+                yPoint2 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0.475, 0))
+                yPoint3 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0.625, 0))
+                yPoint4 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0.7, 0))
+                yPoint5 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 1.1, 0))
+                zPoint = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0, 0.4))
+                zPoint2 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0, 0.475))
+                zPoint3 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0, 0.625))
+                zPoint4 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0, 0.7))
+                zPoint5 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0, 1.1))
+
+                coordsystemGraphics = root.customGraphicsGroups.add()
+                coordsystemGraphics.id = "coordsystem show"
+
+                tempBRep = adsk.fusion.TemporaryBRepManager.get()
+                radius = 0.015
+                xCyl = tempBRep.createCylinderOrCone(origin, radius, xPoint, radius)
+                xCy2 = tempBRep.createCylinderOrCone(xPoint2, radius, xPoint3, radius)
+                xCy3 = tempBRep.createCylinderOrCone(xPoint4, radius, xPoint5, radius)
+                yCyl = tempBRep.createCylinderOrCone(origin, radius, yPoint, radius)
+                yCy2 = tempBRep.createCylinderOrCone(yPoint2, radius, yPoint3, radius)
+                yCy3 = tempBRep.createCylinderOrCone(yPoint4, radius, yPoint5, radius)
+                zCyl = tempBRep.createCylinderOrCone(origin, radius, zPoint, radius)
+                zCy2 = tempBRep.createCylinderOrCone(zPoint2, radius, zPoint3, radius)
+                zCy3 = tempBRep.createCylinderOrCone(zPoint4, radius, zPoint5, radius)
+
+                red = adsk.core.Color.create(255, 0, 0, 255)
+                green = adsk.core.Color.create(0, 255, 0, 255)
+                blue = adsk.core.Color.create(0, 0, 255, 255)
+
+                redColor = adsk.fusion.CustomGraphicsBasicMaterialColorEffect.create(red, red, red, red, 0, 1)
+                greenColor = adsk.fusion.CustomGraphicsBasicMaterialColorEffect.create(
+                    green, green, green, green, 0, 1
+                )
+                blueColor = adsk.fusion.CustomGraphicsBasicMaterialColorEffect.create(blue, blue, blue, blue, 0, 1)
+
+                xCylGraphics = coordsystemGraphics.addBRepBody(xCyl)
+                xCylGraphics.color = redColor
+                xCylGraphics = coordsystemGraphics.addBRepBody(xCy2)
+                xCylGraphics.color = redColor
+                xCylGraphics = coordsystemGraphics.addBRepBody(xCy3)
+                xCylGraphics.color = redColor
+
+                yCylGraphics = coordsystemGraphics.addBRepBody(yCyl)
+                yCylGraphics.color = greenColor
+                yCylGraphics = coordsystemGraphics.addBRepBody(yCy2)
+                yCylGraphics.color = greenColor
+                yCylGraphics = coordsystemGraphics.addBRepBody(yCy3)
+                yCylGraphics.color = greenColor
+
+                zCylGraphics = coordsystemGraphics.addBRepBody(zCyl)
+                zCylGraphics.color = blueColor
+                zCylGraphics = coordsystemGraphics.addBRepBody(zCy2)
+                zCylGraphics.color = blueColor
+                zCylGraphics = coordsystemGraphics.addBRepBody(zCy3)
+                zCylGraphics.color = blueColor
+
+                viewScale = adsk.fusion.CustomGraphicsViewScale.create(100, origin)
+                coordsystemGraphics.viewScale = viewScale
+
+            sketchT = get_gap_lines(0.1)
+            show_coordinate_system(sketchT)
+
+        except:
+            if ui:
+                ui.messageBox("Failed:\n{}".format(traceback.format_exc()))
+
+
+class FoilCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
+    def __init__(self):
+        super().__init__()
+
+    def notify(self, args: adsk.core.CommandEventArgs):
+        try:
+
+            onExecutePreview = FoilExecutePreviewHandler()
+            args.command.executePreview.add(onExecutePreview)
+            _handlers.append(onExecutePreview)
+
+            onExecute = FoilCommandExecuteHandler()
+            args.command.execute.add(onExecute)
+            _handlers.append(onExecute)
+
+            onDestroy = FoilCommandDestroyHandler()
+            args.command.destroy.add(onDestroy)
+            _handlers.append(onDestroy)
+
+            onInputChanged = FoilCommandInputChangedHandler()
+            args.command.inputChanged.add(onInputChanged)
+            _handlers.append(onInputChanged)
+
+            inputs = args.command.commandInputs
+
+            tabCmdInput1 = inputs.addTabCommandInput("tab_1", "Settings")
+            tab1ChildInputs = tabCmdInput1.children
+
+            groupCmdInput0 = tab1ChildInputs.addGroupCommandInput("group0", "Auswahl der DAT-Datei:")
+            groupCmdInput0.isExpanded = True
+            groupCmdInput0.isEnabledCheckBoxDisplayed = False
+            groupChildInputs0 = groupCmdInput0.children
+
+            groupChildInputs0.addBoolValueInput(B1_BUTTON_ID, B1_BUTTON_NAME, False, "", True)
+            groupChildInputs0.addTextBoxCommandInput(T00_TEXTBOX_ID, "", "", 1, True)
+            groupChildInputs0.addTextBoxCommandInput(T01_TEXTBOX_ID, "", "", 1, True)
+            inputs.itemById(T00_TEXTBOX_ID).isVisible = False  # löschen
+            inputs.itemById(T01_TEXTBOX_ID).isVisible = True
+
+            groupCmdInput1 = tab1ChildInputs.addGroupCommandInput("group1", "Auswahl der Splines und Projektionsebene:")
+            groupCmdInput1.isExpanded = True
+            groupCmdInput1.isEnabledCheckBoxDisplayed = False
+            groupChildInputs1 = groupCmdInput1.children
+
+            i1 = groupChildInputs1.addSelectionInput(
+                SE01_SELECTION_INPUT_ID, SE01_SELECTION_INPUT_ID, "Schiene Nasenleiste"
+            )
+            i1.addSelectionFilter(adsk.core.SelectionCommandInput.SketchCurves)
+            i2 = groupChildInputs1.addSelectionInput(
+                SE02_SELECTION_INPUT_ID, SE02_SELECTION_INPUT_ID, "Schiene Endleiste"
+            )
+            i2.addSelectionFilter(adsk.core.SelectionCommandInput.SketchCurves)
+            i5 = groupChildInputs1.addSelectionInput(
+                SE04_SELECTION_INPUT_ID, SE04_SELECTION_INPUT_ID, "Projektionsebene"
+            )
+            i5.addSelectionFilter(adsk.core.SelectionCommandInput.ConstructionPlanes)
+
+            groupCmdInput2 = tab1ChildInputs.addGroupCommandInput("group2", "Ausrichtung:")
+            groupCmdInput2.isExpanded = True
+            groupCmdInput2.isEnabledCheckBoxDisplayed = False
+            groupChildInputs2 = groupCmdInput2.children
+
+            dropdownInput1 = groupChildInputs2.addDropDownCommandInput(
+                D1_DROPDOWN_ID, D1_DROPDOWN_NAME, adsk.core.DropDownStyles.TextListDropDownStyle
+            )
+            dropdown_items1 = dropdownInput1.listItems
+            dropdownInput1.maxVisibleItems = 6
+            dropdownInput1.isFullWidth
+            dropdown_items1.add("in flight direction", True, "")
+            dropdown_items1.add("against flight direction", False, "")
+
+            dropdownInput2 = groupChildInputs2.addDropDownCommandInput(
+                D2_DROPDOWN_ID, D2_DROPDOWN_NAME, adsk.core.DropDownStyles.LabeledIconDropDownStyle
+            )
+            dropdown_items2 = dropdownInput2.listItems
+            dropdownInput2.maxVisibleItems = 6
+            dropdownInput2.isFullWidth
+            dropdown_items2.add("red up", False, "resources/Redup")
+            dropdown_items2.add("red down", False, "resources/Reddown")
+            dropdown_items2.add("green up", True, "resources/Greenup")
+            dropdown_items2.add("green down", False, "resources/Greendown")
+
+            groupChildInputs2.addBoolValueInput(C0_CHECKBOX_ID, C0_CHECKBOX_ID, True, "", False)
+
+            groupCmdInput3 = tab1ChildInputs.addGroupCommandInput("group3", "Nasenleiste:")
+            groupCmdInput3.isExpanded = True
+            groupCmdInput3.isEnabledCheckBoxDisplayed = False
+            groupChildInputs3 = groupCmdInput3.children
+
+            groupChildInputs3.addBoolValueInput(C1_CHECKBOX_ID, C1_CHECKBOX_ID, True, "", False)
+            groupChildInputs3.addBoolValueInput(C2_CHECKBOX_ID, C2_CHECKBOX_ID, True, "", True)
+
+            groupCmdInput4 = tab1ChildInputs.addGroupCommandInput("group4", "Endleiste:")
+            groupCmdInput4.isExpanded = True
+            groupCmdInput4.isEnabledCheckBoxDisplayed = False
+            groupChildInputs4 = groupCmdInput4.children
+
+            groupChildInputs4.addValueInput(I0_VALUE_ID, I0_VALUE_NAME, "mm", adsk.core.ValueInput.createByReal(0.05))
+
+            groupCmdInput5 = tab1ChildInputs.addGroupCommandInput("group5", "Profilaufdickung:")
+            groupCmdInput5.isExpanded = False
+            groupCmdInput5.isEnabledCheckBoxDisplayed = False
+            groupChildInputs5 = groupCmdInput5.children
+
+            groupChildInputs5.addValueInput(I1_VALUE_ID, I1_VALUE_NAME, "", adsk.core.ValueInput.createByReal(1.0))
+            groupChildInputs5.addValueInput(I2_VALUE_ID, I2_VALUE_NAME, "", adsk.core.ValueInput.createByReal(100.0))
+
+            tabCmdInput2 = inputs.addTabCommandInput("tab_2", "Help")
+            tab2ChildInputs = tabCmdInput2.children
+
+            inst_text1 = """ <p><strong>Instructions:</strong></p> \
+                <p>Select rails for leading edge and trailing edge.\
+                <p>Select a plane they intersect with.</p> \
+                <p>When selections are made the axis of the coordinate system will be shown.</p> \
+                <p>Provide information if horizontal axis points in or against flight direction.</p> \
+                <p>Select the direction and color of the vertical axis, top means to the top of the airfoil.</p>
+                <p>Select mirror if you want the airfoil to face down. Feature is left in case an airfoil does not flip in the right way.</p>
+                
+            """
+            tab2ChildInputs.addTextBoxCommandInput("fullWidth_textBox", "", inst_text1, 12, True)
+
+        except:
+            if ui:
+                ui.messageBox("Failed:\n{}".format(traceback.format_exc()))
+
+
+class AirfoilData:
+
+    def __init__(self, filename, name):
+        self.filename = filename
+        self.name = name
+        self.top_coords = []
+        self.bottom_coords = []
+        self.info = []
+        self.profile = self.get_profile()
+
+    def get_profile(self):
+
+        with open(self.filename, encoding="utf-8") as a:
+            text = a.read()
+
+        muster = r"-?\d+\.\d{3,}"
+
+        find_koord = re.compile(rf"^\s*({muster})\s*({muster})\s*$", flags=re.MULTILINE)
+
+        abschnitte = []
+        for abschnitt in text.split("\n\n"):
+            koordinaten = find_koord.findall(abschnitt)
+            if not koordinaten:
+                continue
+
+            abschnitte.append([(float(x), float(y)) for x, y in koordinaten])
+
+        # selig format
+        if len(abschnitte) == 1:
+            self.profile = abschnitte[0]
+
+        # lednicer format
+        elif len(abschnitte) == 2 and abschnitte[0][0] == abschnitte[1][0]:
+            # doppelte koordinate entfernen und einen Abschnitt rückwärts laufen
+            temp = list(abschnitte[1][0])
+            del temp[1]
+            temp = list(reversed(temp))
+            self.profile = temp + abschnitte[1]
+        else:
+            self.profile = []
+
+        if self.profile[0][0] != 1 and self.profile[-1][0] == 1:
+            self.profile.insert(0, (1, self.profile[0][1]))
+
+        if self.profile[-1][0] != 1 and self.profile[0][0] == 1:
+            self.profile.extend((1, self.profile[-1][1]))
+
+        self.coords_split_move()
+
+    def move(self):
+
+        top = [
+            (
+                float(self.top_coords[i][0]) - float(self.bottom_coords[0][0]),
+                float(self.top_coords[i][1]) - float(self.bottom_coords[0][1]),
+            )
+            for i in range(len(self.top_coords))
+        ]
+        bottom = [
+            (
+                float(self.bottom_coords[i][0]) - float(self.bottom_coords[0][0]),
+                float(self.bottom_coords[i][1]) - float(self.bottom_coords[0][1]),
+            )
+            for i in range(len(self.bottom_coords))
+        ]
+
+        self.top_coords = top
+        self.bottom_coords = bottom
+        self.derotate()
+
+    def derotate(self):
+
+        alpha_top = self.get_alpha(self.top_coords[0][1], self.top_coords[0][0])
+        alpha_bottom = self.get_alpha(self.bottom_coords[-1][1], self.bottom_coords[-1][0])
+        top_new = []
+        bottom_new = []
+        for i in range(len(self.top_coords)):
+            x, y = self.rotation(self.top_coords[i][0], self.top_coords[i][1], -alpha_top)
+            top_new.append((x, y))
+
+        for i in range(len(self.bottom_coords)):
+            x, y = self.rotation(self.bottom_coords[i][0], self.bottom_coords[i][1], -alpha_bottom)
+            bottom_new.append((x, y))
+
+        self.top_coords = top_new
+        self.bottom_coords = bottom_new
+        self.normalize()
+
+    def coords_split_move(self):
+        x_values, y_values = map(list, zip(*self.profile))
+
+        # check if x min is (0, 0) otherwise move to origin, derotate and normalize, if it is not sth like s3002
+        nose_index = x_values.index(min(x_values))
+        self.top_coords = self.profile[0 : nose_index + 1]
+        self.bottom_coords = self.profile[nose_index:]
+
+        if float(self.bottom_coords[0][0]) != 0 or float(self.bottom_coords[0][1]) != 0:
+            if (
+                float(self.bottom_coords[1][1]) < 0 and float(self.top_coords[-2][1]) > 0
+            ):  # S3002 type no nose point given
+                self.info.append("Das Profil besitzt keinen Punkt (0,0), keine vertikale Tangente an der Nase!")
+                self.get_coords_nose()
+            else:  # AG35 type with x min as Nosepoint
+                self.info.append("Das Profil wird derotiert!")
+                self.move()
+
+    def normalize(self):
+        if self.top_coords[0][0] < 0:
+            factort = 1 / self.top_coords[0][0]
+        elif self.top_coords[0][0] > 0:
+            factort = self.top_coords[0][0]
+        else:
+            pass
+
+        top_new = [(self.top_coords[i][0] * factort, self.top_coords[i][1]) for i in range(1, len(self.top_coords))]
+        top_new.insert(0, (1, 0))
+
+        if self.bottom_coords[-1][0] < 0:
+            factorb = 1 / self.bottom_coords[-1][0]
+        elif self.bottom_coords[-1][0] > 0:
+            factorb = self.bottom_coords[-1][0]
+        else:
+            pass
+
+        bottom_new = [
+            (self.bottom_coords[i][0] * factorb, self.bottom_coords[i][1])
+            for i in range(0, len(self.bottom_coords) - 1)
+        ]
+        bottom_new.append((1, 0))
+
+        self.top_coords = top_new
+        self.bottom_coords = bottom_new
+
+    @staticmethod
+    def rotation(x, y, alpha):
+        x_new = x * math.cos(alpha) - y * math.sin(alpha)
+        y_new = x * math.sin(alpha) + y * math.cos(alpha)
+
+        return x_new, y_new
+
+    @staticmethod
+    def get_alpha(gegenkathete, ankathete):
+        # avoid zero division
+        if ankathete == 0:
+            alpha = math.pi / 2 if gegenkathete > 0 else -math.pi / 2
+        else:
+            alpha = math.atan(gegenkathete / ankathete)
+
+        return alpha
+
+    def get_coords_nose(self):
+        sketchNose = sketches.add(root.xYConstructionPlane)
+        sketchNose.name = "GetNose"
+
+        coordsO = self.top_coords
+        coordsU = self.bottom_coords
+
+        if coordsO[-1][0] == coordsU[0][0] and coordsO[-1][1] == coordsU[0][1]:
+            del coordsU[0]
+
+        coords = list(coordsO) + list(coordsU)
+        coll = adsk.core.ObjectCollection.create()
+        coll_line = adsk.core.ObjectCollection.create()
+
+        for i in range(len(coords)):
+            point = adsk.core.Point3D.create(coords[i][0], coords[i][1], 0)
+            coll.add(point)
+
+        spline = sketchNose.sketchCurves.sketchFittedSplines.add(coll)
+        line = sketchNose.sketchCurves.sketchLines.addByTwoPoints(
+            adsk.core.Point3D.create(-0.3, 0, 0), adsk.core.Point3D.create(0.3, 0, 0)
+        )
+        coll_line.add(line)
+
+        intersection = spline.intersections(coll_line)
+
+        array = intersection[2][0].asArray()
+
+        coordsU.insert(0, (array[0], 0))
+        coordsO.append((array[0], 0))
+
+        if array[0] < 0:
+            s = abs(array[0])
+        else:
+            s = -array[0]
+
+        t = 1 / (1 + s)  ### korrigieren in 1
+
+        coordsUn = [((coordsU[i][0] + s) * t, coordsU[i][1], 0) for i in range(len(coordsU))]
+        coordsOn = [((coordsO[i][0] + s) * t, coordsO[i][1], 0) for i in range(len(coordsO))]
+
+        sketchNose.deleteMe()
+
+        self.top_coords = coordsOn
+        self.bottom_coords = coordsUn
+
+
+class AirfoilThick:
+    def __init__(self, name, top_coords, bottom_coords, thickness, points):
+        self.name = name
+        self.top_coords = top_coords
+        self.bottom_coords = bottom_coords
+        self.thickness = thickness
+        self.points = points
+
+    def make_thick(self):
+
+        def cos_verteilung(punkte: int, rootlength: float):
+            x_values = []
+            step = math.pi / (punkte - 1)
+
+            for i in range(punkte):
+                theta = i * step / 2
+                x = 1 - math.cos(theta)
+                x_values.append(x * rootlength)
+
+            return x_values
+
+        factor = self.thickness
+        ipoints = self.points
+        top = self.top_coords
+        bottom = self.bottom_coords
+
+        xt = [top[i][0] for i in range(len(top))]
+        xb = list(reversed([bottom[i][0] for i in range(len(bottom))]))
+
+        top2 = top
+        del top2[-1]
+        combined = list(top2) + list(bottom)
+
+        sketchChamber = sketches.add(root.xYConstructionPlane)
+        sketchChamber.name = "Interpolation"
+
+        points = adsk.core.ObjectCollection.create()
+        for i in range(len(combined)):
+            point = adsk.core.Point3D.create(float(combined[i][0]), float(combined[i][1]), 0)
+            points.add(point)
+
+        if points.count % 2 != 0:
+            breakpoint = int((points.count - 1) / 2) - 1
+        else:
+            breakpoint = int((points.count) / 2) - 1
+
+        breakline = sketchChamber.sketchCurves.sketchLines.addByTwoPoints(
+            adsk.core.Point3D.create(0, 0, 0), adsk.core.Point3D.create(0.2, 0, 0)
+        )
+        normal = sketchChamber.sketchCurves.sketchFittedSplines.add(points)
+        normal.isClosed = False
+
+        splines = normal.breakCurve(points.item(breakpoint))
+
+        splines.item(1).addFitPoint(0.99999)
+        sketchChamber.geometricConstraints.addCoincident(
+            splines.item(1).endSketchPoint, splines.item(0).startSketchPoint
+        )
+
+        rootlength = 1
+
+        x_verteilung = cos_verteilung(int(ipoints * 0.5), rootlength)
+
+        O = []
+        U = []
+
+        for i in range(1, len(x_verteilung) - 1):
+            collLines = adsk.core.ObjectCollection.create()
+            pu = adsk.core.Point3D.create(float(x_verteilung[i]), -10, 0)
+            po = adsk.core.Point3D.create(float(x_verteilung[i]), 10, 0)
+            line = sketchChamber.sketchCurves.sketchLines.addByTwoPoints(pu, po)
+            collLines.add(line)
+            O.append(splines.item(0).intersections(collLines)[2][0].asArray())
+            U.append(splines.item(1).intersections(collLines)[2][0].asArray())
+            line.deleteMe()
+
+        scaledO = [(O[i][0] / rootlength, O[i][1] / rootlength) for i in range(len(O) - 1)]
+        scaledO.append((1, 0))
+        scaledU = [(U[i][0] / rootlength, U[i][1] / rootlength) for i in range(len(U) - 1)]  # test negiert
+        scaledU.append((1, 0))
+        chamber = [(scaledO[i][0], (scaledO[i][1] + scaledU[i][1]) * 0.5, 0) for i in range(len(scaledO))]
+
+        thickO = [
+            (chamber[i][0], (factor * (scaledO[i][1] - chamber[i][1])) + chamber[i][1], 0) for i in range(len(chamber))
+        ]
+        thickU = [
+            (chamber[i][0], (factor * (scaledU[i][1] - chamber[i][1])) + chamber[i][1], 0) for i in range(len(chamber))
+        ]
+
+        origin = [(0, 0)]
+        chamber_line = [(0, 0, 0)] + chamber
+
+        thicked = list(reversed(thickO)) + list(origin) + list(thickU)
+        thickedO = list(reversed(thickO)) + list(origin)
+        thickedU = list(thickU)
+
+        self.top_coords = thickedO
+        self.bottom_coords = thickedU
+
+        sketchChamber.deleteMe()
+
+
+class AirfoilSketch:
+    def create_sketch(
         self,
         gap,
         mirror,
@@ -176,17 +810,14 @@ class Foil:
         dicke,
         interpolationspunkte,
         coords_o,
-        coords_u
+        coords_u,
     ):
 
-        if dicke !=1:
-            airfoildatad = AirfoilD(
-                    name, top_coords, bottom_coords, dicke, interpolationspunkte
-                )
+        if dicke != 1:
+            airfoildatad = AirfoilThick(name, top_coords, bottom_coords, dicke, interpolationspunkte)
             airfoildatad.make_thick()
             coords_o = airfoildatad.top_coords
             coords_u = airfoildatad.bottom_coords
-
 
         sketchT = sketches.add(planesel)
         try:
@@ -417,10 +1048,10 @@ class Foil:
         dim[-1].parameter.name = "rootU_is" + str(suf)
         rootlineU_lenght_is = dim[-1].parameter.value
 
-        createParam(design, "scaleO" + str(suf), 1, "mm", "scalefactor")
+        createParam(design, "scaleO" + str(suf), 1, "mm", "scalefactor" + str(suf))
         _user_parameters["scaleO" + str(suf)].expressions = "rootO" + str(suf) + "mm/rootO_is" + str(suf)
 
-        createParam(design, "scaleU" + str(suf), 1, "mm", "scalefactorU")
+        createParam(design, "scaleU" + str(suf), 1, "mm", "scalefactorU" + str(suf))
         _user_parameters["scaleU" + str(suf)].expressions = "rootU" + str(suf) + "mm/rootU_is" + str(suf)
 
         # scale Matrix
@@ -548,11 +1179,12 @@ class Foil:
             if pointsM_OU.item(i).isEqualTo(pointsM_OU.item(i + 1)):
                 pointsM_OU.removeByIndex(i)
 
-        # one whole spline
+        # one spline
         spline = sketchT.sketchCurves.sketchFittedSplines.add(pointsM_OU)
         if gap == 0:
             spline.isClosed = False
 
+        # cleanup construction lines
         if gap != 0:
             gaplineO.deleteMe()
             gaplineU.deleteMe()
@@ -568,6 +1200,7 @@ class Foil:
 
         handle.isConstruction = True
 
+        # spline looses connection to tail at the bottom when not closed. Add point and moves it to the tail.
         if gap == 0:
             spline.addFitPoint(0.99999)
             sketchT.geometricConstraints.addCoincident(spline.endSketchPoint, line_sehne.endSketchPoint)
@@ -576,627 +1209,3 @@ class Foil:
             line_sehne.isConstruction = False
             spline.breakCurve(pointsM_OU.item(pointsM_O.count - 2))
             line_sehne.isConstruction = True
-
-
-class FoilExecutePreviewHandler(adsk.core.CommandEventHandler):
-    def __init__(self):
-        super().__init__()
-
-    def notify(self, args: adsk.core.CommandEventArgs):
-        # Code to react to the event.
-        app.log("In MyExecutePreviewHandler event handler.")
-
-        try:
-
-            def get_gap_lines(halfgap):
-                inputs = args.command.commandInputs
-                command = args.firingEvent.sender
-                inputs = command.commandInputs
-
-                entities_nose = []
-                entities_tail = []
-
-                entities_nose.append(inputs.itemById(SE01_SELECTION_INPUT_ID).selection(0).entity)
-                entities_tail.append(inputs.itemById(SE02_SELECTION_INPUT_ID).selection(0).entity)
-                plane = inputs.itemById(SE04_SELECTION_INPUT_ID).selection(0).entity
-
-                sketchT = sketches.add(plane)
-
-                sketchEntities1 = sketchT.intersectWithSketchPlane(entities_nose)
-                sketchEntities2 = sketchT.intersectWithSketchPlane(entities_tail)
-
-                if len(sketchEntities1) == 0 or len(sketchEntities2) == 0:
-                    ui.messageBox("At least one rail dos not intersect with the selected plane!")
-
-                for pt in sketchEntities1:
-                    if pt.objectType == adsk.fusion.SketchPoint.classType():
-                        nosep = sketchT.project(pt)
-
-                for pt in sketchEntities2:  # war nicht drin
-                    if pt.objectType == adsk.fusion.SketchPoint.classType():
-                        tailp = sketchT.project(pt)
-
-                line_sehne = sketchT.sketchCurves.sketchLines.addByTwoPoints(nosep.item(0), tailp.item(0))
-                line_sehne.isConstruction = True
-
-                circlecoll_two_circles = adsk.core.ObjectCollection.create()
-                linecoll_centerline = adsk.core.ObjectCollection.create()
-                linecoll_gapline1 = adsk.core.ObjectCollection.create()
-                linecoll_gapline2 = adsk.core.ObjectCollection.create()
-
-                circle1 = sketchT.sketchCurves.sketchCircles.addByCenterRadius(
-                    line_sehne.startSketchPoint.geometry, line_sehne.length
-                )
-                circlecoll_two_circles.add(circle1)
-                circle2 = sketchT.sketchCurves.sketchCircles.addByCenterRadius(
-                    line_sehne.endSketchPoint.geometry, line_sehne.length
-                )
-
-                circle_intersections = circle2.intersections(circlecoll_two_circles)
-                circle_instersection1 = circle_intersections[2][0]
-                circle_instersection2 = circle_intersections[2][1]
-
-                lineytest = sketchT.sketchCurves.sketchLines.addByTwoPoints(
-                    circle_instersection1, circle_instersection2
-                )
-                linecoll_centerline.add(lineytest)
-
-                line_intersections = line_sehne.intersections(linecoll_centerline)
-
-                midpt = line_intersections[2][0]
-                trans_to_tail = midpt.vectorTo(line_sehne.endSketchPoint.geometry)
-
-                point_for_tail1 = lineytest.startSketchPoint.geometry.copy()
-                point_for_tail2 = lineytest.endSketchPoint.geometry.copy()
-
-                point_for_tail1.translateBy(trans_to_tail)
-                point_for_tail2.translateBy(trans_to_tail)
-
-                perpendicular_line1 = sketchT.sketchCurves.sketchLines.addByTwoPoints(
-                    line_sehne.endSketchPoint.geometry, point_for_tail1
-                )
-                linecoll_gapline1.add(perpendicular_line1)
-
-                perpendicular_line2 = sketchT.sketchCurves.sketchLines.addByTwoPoints(
-                    line_sehne.endSketchPoint.geometry, point_for_tail2
-                )
-                linecoll_gapline2.add(perpendicular_line2)
-
-                circle3 = sketchT.sketchCurves.sketchCircles.addByCenterRadius(
-                    line_sehne.endSketchPoint.geometry, halfgap
-                )
-
-                gapline1_endpoint = circle3.intersections(linecoll_gapline1)
-                gapline2_endpoint = circle3.intersections(linecoll_gapline2)
-
-                lineytest.deleteMe()
-                perpendicular_line1.deleteMe()
-                perpendicular_line2.deleteMe()
-                circle1.deleteMe()
-                circle2.deleteMe()
-                circle3.deleteMe()
-
-                gapline1 = sketchT.sketchCurves.sketchLines.addByTwoPoints(
-                    line_sehne.endSketchPoint.geometry, gapline1_endpoint[2][0]
-                )
-                gapline2 = sketchT.sketchCurves.sketchLines.addByTwoPoints(
-                    line_sehne.endSketchPoint.geometry, gapline2_endpoint[2][0]
-                )
-
-                return sketchT
-
-            def show_coordinate_system(sketchT):
-
-                # Koordinatensystem
-                origin = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0, 0))
-                xPoint = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0.4, 0, 0))
-                xPoint2 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0.475, 0, 0))
-                xPoint3 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0.625, 0, 0))
-                xPoint4 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0.7, 0, 0))
-                xPoint5 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(1.1, 0, 0))
-                yPoint = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0.4, 0))
-                yPoint2 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0.475, 0))
-                yPoint3 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0.625, 0))
-                yPoint4 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0.7, 0))
-                yPoint5 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 1.1, 0))
-                zPoint = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0, 0.4))
-                zPoint2 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0, 0.475))
-                zPoint3 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0, 0.625))
-                zPoint4 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0, 0.7))
-                zPoint5 = sketchT.sketchToModelSpace(adsk.core.Point3D.create(0, 0, 1.1))
-
-                coordsystemGraphics = root.customGraphicsGroups.add()
-                coordsystemGraphics.id = "coordsystem show"
-
-                tempBRep = adsk.fusion.TemporaryBRepManager.get()
-                radius = 0.015
-                xCyl = tempBRep.createCylinderOrCone(origin, radius, xPoint, radius)
-                xCy2 = tempBRep.createCylinderOrCone(xPoint2, radius, xPoint3, radius)
-                xCy3 = tempBRep.createCylinderOrCone(xPoint4, radius, xPoint5, radius)
-                yCyl = tempBRep.createCylinderOrCone(origin, radius, yPoint, radius)
-                yCy2 = tempBRep.createCylinderOrCone(yPoint2, radius, yPoint3, radius)
-                yCy3 = tempBRep.createCylinderOrCone(yPoint4, radius, yPoint5, radius)
-                zCyl = tempBRep.createCylinderOrCone(origin, radius, zPoint, radius)
-                zCy2 = tempBRep.createCylinderOrCone(zPoint2, radius, zPoint3, radius)
-                zCy3 = tempBRep.createCylinderOrCone(zPoint4, radius, zPoint5, radius)
-
-                red = adsk.core.Color.create(255, 0, 0, 255)
-                green = adsk.core.Color.create(0, 255, 0, 255)
-                blue = adsk.core.Color.create(0, 0, 255, 255)
-
-                redColor = adsk.fusion.CustomGraphicsBasicMaterialColorEffect.create(red, red, red, red, 0, 1)
-                greenColor = adsk.fusion.CustomGraphicsBasicMaterialColorEffect.create(
-                    green, green, green, green, 0, 1
-                )
-                blueColor = adsk.fusion.CustomGraphicsBasicMaterialColorEffect.create(blue, blue, blue, blue, 0, 1)
-
-                xCylGraphics = coordsystemGraphics.addBRepBody(xCyl)
-                xCylGraphics.color = redColor
-                xCylGraphics = coordsystemGraphics.addBRepBody(xCy2)
-                xCylGraphics.color = redColor
-                xCylGraphics = coordsystemGraphics.addBRepBody(xCy3)
-                xCylGraphics.color = redColor
-
-                yCylGraphics = coordsystemGraphics.addBRepBody(yCyl)
-                yCylGraphics.color = greenColor
-                yCylGraphics = coordsystemGraphics.addBRepBody(yCy2)
-                yCylGraphics.color = greenColor
-                yCylGraphics = coordsystemGraphics.addBRepBody(yCy3)
-                yCylGraphics.color = greenColor
-
-                zCylGraphics = coordsystemGraphics.addBRepBody(zCyl)
-                zCylGraphics.color = blueColor
-                zCylGraphics = coordsystemGraphics.addBRepBody(zCy2)
-                zCylGraphics.color = blueColor
-                zCylGraphics = coordsystemGraphics.addBRepBody(zCy3)
-                zCylGraphics.color = blueColor
-
-                viewScale = adsk.fusion.CustomGraphicsViewScale.create(100, origin)
-                coordsystemGraphics.viewScale = viewScale
-
-            sketchT = get_gap_lines(0.1)
-            show_coordinate_system(sketchT)
-
-        except:
-            if ui:
-                ui.messageBox("Failed:\n{}".format(traceback.format_exc()))
-
-
-class FoilCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
-    def __init__(self):
-        super().__init__()
-
-    def notify(self, args: adsk.core.CommandEventArgs):
-        try:
-
-            onExecutePreview = FoilExecutePreviewHandler()
-            args.command.executePreview.add(onExecutePreview)
-            _handlers.append(onExecutePreview)
-
-            onExecute = FoilCommandExecuteHandler()
-            args.command.execute.add(onExecute)
-            _handlers.append(onExecute)
-
-            onDestroy = FoilCommandDestroyHandler()
-            args.command.destroy.add(onDestroy)
-            _handlers.append(onDestroy)
-
-            onInputChanged = FoilCommandInputChangedHandler()
-            args.command.inputChanged.add(onInputChanged)
-            _handlers.append(onInputChanged)
-
-            inputs = args.command.commandInputs
-
-            tabCmdInput1 = inputs.addTabCommandInput("tab_1", "Settings")
-            tab1ChildInputs = tabCmdInput1.children
-
-            groupCmdInput0 = tab1ChildInputs.addGroupCommandInput("group", "Auswahl der DAT-Datei:")
-            groupCmdInput0.isExpanded = True
-            groupCmdInput0.isEnabledCheckBoxDisplayed = False
-            groupChildInputs0 = groupCmdInput0.children
-
-            groupChildInputs0.addBoolValueInput(B1_BUTTON_ID, B1_BUTTON_NAME, False, "", True)
-
-            groupCmdInput1 = tab1ChildInputs.addGroupCommandInput("group", "Auswahl der Splines und Projektionsebene:")
-            groupCmdInput1.isExpanded = True
-            groupCmdInput1.isEnabledCheckBoxDisplayed = False
-            groupChildInputs1 = groupCmdInput1.children
-
-            i1 = groupChildInputs1.addSelectionInput(
-                SE01_SELECTION_INPUT_ID, SE01_SELECTION_INPUT_ID, "Schiene Nasenleiste"
-            )
-            i1.addSelectionFilter(adsk.core.SelectionCommandInput.SketchCurves)
-            i2 = groupChildInputs1.addSelectionInput(
-                SE02_SELECTION_INPUT_ID, SE02_SELECTION_INPUT_ID, "Schiene Endleiste"
-            )
-            i2.addSelectionFilter(adsk.core.SelectionCommandInput.SketchCurves)
-            i5 = groupChildInputs1.addSelectionInput(
-                SE04_SELECTION_INPUT_ID, SE04_SELECTION_INPUT_ID, "Projektionsebene"
-            )
-            i5.addSelectionFilter(adsk.core.SelectionCommandInput.ConstructionPlanes)
-
-            groupCmdInput2 = tab1ChildInputs.addGroupCommandInput("group", "Ausrichtung:")
-            groupCmdInput2.isExpanded = True
-            groupCmdInput2.isEnabledCheckBoxDisplayed = False
-            groupChildInputs2 = groupCmdInput2.children
-
-            dropdownInput1 = groupChildInputs2.addDropDownCommandInput(
-                D1_DROPDOWN_ID, D1_DROPDOWN_NAME, adsk.core.DropDownStyles.TextListDropDownStyle
-            )
-            dropdown_items1 = dropdownInput1.listItems
-            dropdownInput1.maxVisibleItems = 6
-            dropdownInput1.isFullWidth
-            dropdown_items1.add("in flight direction", True, "")
-            dropdown_items1.add("against flight direction", False, "")
-
-            dropdownInput2 = groupChildInputs2.addDropDownCommandInput(
-                D2_DROPDOWN_ID, D2_DROPDOWN_NAME, adsk.core.DropDownStyles.LabeledIconDropDownStyle
-            )
-            dropdown_items2 = dropdownInput2.listItems
-            dropdownInput2.maxVisibleItems = 6
-            dropdownInput2.isFullWidth
-            dropdown_items2.add("red up", False, "resources/Redup")
-            dropdown_items2.add("red down", False, "resources/Reddown")
-            dropdown_items2.add("green up", True, "resources/Greenup")
-            dropdown_items2.add("green down", False, "resources/Greendown")
-
-            groupChildInputs2.addBoolValueInput(C0_CHECKBOX_ID, C0_CHECKBOX_ID, True, "", False)
-
-            groupCmdInput3 = tab1ChildInputs.addGroupCommandInput("group", "Nasenleiste:")
-            groupCmdInput3.isExpanded = True
-            groupCmdInput3.isEnabledCheckBoxDisplayed = False
-            groupChildInputs3 = groupCmdInput3.children
-
-            groupChildInputs3.addBoolValueInput(C1_CHECKBOX_ID, C1_CHECKBOX_ID, True, "", False)
-            groupChildInputs3.addBoolValueInput(C2_CHECKBOX_ID, C2_CHECKBOX_ID, True, "", True)
-
-            groupCmdInput4 = tab1ChildInputs.addGroupCommandInput("group", "Endleiste:")
-            groupCmdInput4.isExpanded = True
-            groupCmdInput4.isEnabledCheckBoxDisplayed = False
-            groupChildInputs4 = groupCmdInput4.children
-
-            groupChildInputs4.addValueInput(I0_VALUE_ID, I0_VALUE_NAME, "mm", adsk.core.ValueInput.createByReal(0.05))
-
-            groupCmdInput5 = tab1ChildInputs.addGroupCommandInput("group", "Profilaufdickung:")
-            groupCmdInput5.isExpanded = False
-            groupCmdInput5.isEnabledCheckBoxDisplayed = False
-            groupChildInputs5 = groupCmdInput5.children
-
-            groupChildInputs5.addValueInput(I1_VALUE_ID, I1_VALUE_NAME, "", adsk.core.ValueInput.createByReal(1.0))
-            groupChildInputs5.addValueInput(I2_VALUE_ID, I2_VALUE_NAME, "", adsk.core.ValueInput.createByReal(100.0))
-
-            tabCmdInput2 = inputs.addTabCommandInput("tab_2", "Help")
-            tab2ChildInputs = tabCmdInput2.children
-
-            inst_text1 = """ <p><strong>Instructions:</strong></p> \
-                <p>Select rails for leading edge and trailing edge.\
-                <p>Select a plane they intersect with.</p> \
-                <p>When selections are made the axis of the coordinate system will be shown.</p> \
-                <p>Provide information if horizontal axis points in or against flight direction.</p> \
-                <p>Select the direction and color of the vertical axis, top means to the top of the airfoil.</p>
-                <p>Select mirror if you want the airfoil to face down. Feature is left in case an airfoil does not flip in the right way.</p>
-                
-            """
-            tab2ChildInputs.addTextBoxCommandInput("fullWidth_textBox", "", inst_text1, 12, True)
-
-        except:
-            if ui:
-                ui.messageBox("Failed:\n{}".format(traceback.format_exc()))
-
-
-def run(context):
-    try:
-
-        cmdDef = ui.commandDefinitions.itemById(COMMAND_ID)
-        if not cmdDef:
-            cmdDef = ui.commandDefinitions.addButtonDefinition(COMMAND_ID, "Airfoil Import", "Airfoil Import")
-        onCommandCreated = FoilCommandCreatedHandler()
-
-        cmdDef.commandCreated.add(onCommandCreated)
-        _handlers.append(onCommandCreated)
-
-        cmdDef.execute()
-        adsk.autoTerminate(False)
-
-    except:
-        if ui:
-            ui.messageBox("Failed:\n{}".format(traceback.format_exc()))
-
-
-class AirfoilC:
-
-    def __init__(self, filename, name):
-        self.filename = filename
-        self.name = name
-        self.top_coords = []
-        self.bottom_coords = []
-        self.info = []
-        self.profile = self.get_profile()
-
-    def get_profile(self):
-
-        with open(self.filename, encoding="utf-8") as a:
-            text = a.read()
-
-        muster = r"-?\d+\.\d{3,}"
-
-        find_koord = re.compile(rf"^\s*({muster})\s*({muster})\s*$", flags=re.MULTILINE)
-
-        abschnitte = []
-        for abschnitt in text.split("\n\n"):
-            koordinaten = find_koord.findall(abschnitt)
-            if not koordinaten:
-                continue
-
-            abschnitte.append([(float(x), float(y)) for x, y in koordinaten])
-
-        # selig format
-        if len(abschnitte) == 1:
-            self.profile = abschnitte[0]
-
-        # lednicer format
-        elif len(abschnitte) == 2 and abschnitte[0][0] == abschnitte[1][0]:
-            # doppelte koordinate entfernen und einen Abschnitt rückwärts laufen
-            temp = list(abschnitte[1][0])
-            del temp[1]
-            temp = list(reversed(temp))
-            self.profile = temp + abschnitte[1]
-        else:
-            self.profile = []
-
-        if self.profile[0][0] != 1 and self.profile[-1][0] == 1:
-            self.profile.insert(0, (1, self.profile[0][1]))
-
-        if self.profile[-1][0] != 1 and self.profile[0][0] == 1:
-            self.profile.extend((1, self.profile[-1][1]))
-
-        self.coords_split_move()
-
-    def move(self):
-
-        top = [
-            (
-                float(self.top_coords[i][0]) - float(self.bottom_coords[0][0]),
-                float(self.top_coords[i][1]) - float(self.bottom_coords[0][1]),
-            )
-            for i in range(len(self.top_coords))
-        ]
-        bottom = [
-            (
-                float(self.bottom_coords[i][0]) - float(self.bottom_coords[0][0]),
-                float(self.bottom_coords[i][1]) - float(self.bottom_coords[0][1]),
-            )
-            for i in range(len(self.bottom_coords))
-        ]
-
-        self.top_coords = top
-        self.bottom_coords = bottom
-        self.derotate()
-
-    def derotate(self):
-
-        alpha_top = self.get_alpha(self.top_coords[0][1], self.top_coords[0][0])
-        alpha_bottom = self.get_alpha(self.bottom_coords[-1][1], self.bottom_coords[-1][0])
-        top_new = []
-        bottom_new = []
-        for i in range(len(self.top_coords)):
-            x, y = self.rotation(self.top_coords[i][0], self.top_coords[i][1], -alpha_top)
-            top_new.append((x, y))
-
-        for i in range(len(self.bottom_coords)):
-            x, y = self.rotation(self.bottom_coords[i][0], self.bottom_coords[i][1], -alpha_bottom)
-            bottom_new.append((x, y))
-
-        self.top_coords = top_new
-        self.bottom_coords = bottom_new
-        self.normalize()
-
-    def coords_split_move(self):
-        x_values, y_values = map(list, zip(*self.profile))
-
-        # check if x min is (0, 0) otherwise move to origin, derotate and normalize, if it is not sth like s3002
-        nose_index = x_values.index(min(x_values))
-        self.top_coords = self.profile[0 : nose_index + 1]
-        self.bottom_coords = self.profile[nose_index:]
-
-        if float(self.bottom_coords[0][0]) != 0 or float(self.bottom_coords[0][1]) != 0:
-            if (
-                float(self.bottom_coords[1][1]) < 0 and float(self.top_coords[-2][1]) > 0
-            ):  # S3002 type no nose point given
-                self.info.append("Das Profil besitzt keinen Punkt (0,0), keine vertikale Tangente an der Nase!")
-                self.get_coords_nose()
-            else:  # AG35 type with x min as Nosepoint
-                self.info.append("Das Profil wird derotiert!")
-                self.move()
-
-    def normalize(self):
-        if self.top_coords[0][0] < 0:
-            factort = 1 / self.top_coords[0][0]
-        elif self.top_coords[0][0] > 0:
-            factort = self.top_coords[0][0]
-        else:
-            pass
-
-        top_new = [(self.top_coords[i][0] * factort, self.top_coords[i][1]) for i in range(1, len(self.top_coords))]
-        top_new.insert(0, (1, 0))
-
-        if self.bottom_coords[-1][0] < 0:
-            factorb = 1 / self.bottom_coords[-1][0]
-        elif self.bottom_coords[-1][0] > 0:
-            factorb = self.bottom_coords[-1][0]
-        else:
-            pass
-
-        bottom_new = [
-            (self.bottom_coords[i][0] * factorb, self.bottom_coords[i][1])
-            for i in range(0, len(self.bottom_coords) - 1)
-        ]
-        bottom_new.append((1, 0))
-
-        self.top_coords = top_new
-        self.bottom_coords = bottom_new
-
-    @staticmethod
-    def rotation(x, y, alpha):
-        x_new = x * math.cos(alpha) - y * math.sin(alpha)
-        y_new = x * math.sin(alpha) + y * math.cos(alpha)
-
-        return x_new, y_new
-
-    @staticmethod
-    def get_alpha(gegenkathete, ankathete):
-        # avoid zero division
-        if ankathete == 0:
-            alpha = math.pi / 2 if gegenkathete > 0 else -math.pi / 2
-        else:
-            alpha = math.atan(gegenkathete / ankathete)
-
-        return alpha
-
-    def get_coords_nose(self):
-        sketchNose = sketches.add(root.xYConstructionPlane)
-        sketchNose.name = "GetNose"
-
-        coordsO = self.top_coords
-        coordsU = self.bottom_coords
-
-        if coordsO[-1][0] == coordsU[0][0] and coordsO[-1][1] == coordsU[0][1]:
-            del coordsU[0]
-
-        coords = list(coordsO) + list(coordsU)
-        coll = adsk.core.ObjectCollection.create()
-        coll_line = adsk.core.ObjectCollection.create()
-
-        for i in range(len(coords)):
-            point = adsk.core.Point3D.create(coords[i][0], coords[i][1], 0)
-            coll.add(point)
-
-        spline = sketchNose.sketchCurves.sketchFittedSplines.add(coll)
-        line = sketchNose.sketchCurves.sketchLines.addByTwoPoints(
-            adsk.core.Point3D.create(-0.3, 0, 0), adsk.core.Point3D.create(0.3, 0, 0)
-        )
-        coll_line.add(line)
-
-        intersection = spline.intersections(coll_line)
-
-        array = intersection[2][0].asArray()
-
-        coordsU.insert(0, (array[0], 0))
-        coordsO.append((array[0], 0))
-
-        if array[0] < 0:
-            s = abs(array[0])
-        else:
-            s = -array[0]
-
-        t = 1 / (1 + s)  ### korrigieren in 1
-
-        coordsUn = [((coordsU[i][0] + s) * t, coordsU[i][1], 0) for i in range(len(coordsU))]
-        coordsOn = [((coordsO[i][0] + s) * t, coordsO[i][1], 0) for i in range(len(coordsO))]
-
-        sketchNose.deleteMe()
-
-        self.top_coords = coordsOn
-        self.bottom_coords = coordsUn
-
-
-class AirfoilD:
-    def __init__(self, name, top_coords, bottom_coords, thickness, points):
-        self.name = name
-        self.top_coords = top_coords
-        self.bottom_coords = bottom_coords
-        self.thickness = thickness
-        self.points = points
-
-    def make_thick(self):
-
-        def cos_verteilung(punkte: int, rootlength: float):
-            x_values = []
-            step = math.pi / (punkte - 1)
-
-            for i in range(punkte):
-                theta = i * step / 2
-                x = 1 - math.cos(theta)
-                x_values.append(x * rootlength)
-
-            return x_values
-
-        factor = self.thickness
-        ipoints = self.points
-        top = self.top_coords
-        bottom = self.bottom_coords
-
-        xt = [top[i][0] for i in range(len(top))]
-        xb = list(reversed([bottom[i][0] for i in range(len(bottom))]))
-
-        top2 = top
-        del top2[-1]
-        combined = list(top2) + list(bottom)
-
-        sketchChamber = sketches.add(root.xYConstructionPlane)
-        sketchChamber.name = "Interpolation"
-
-        points = adsk.core.ObjectCollection.create()
-        for i in range(len(combined)):
-            point = adsk.core.Point3D.create(float(combined[i][0]), float(combined[i][1]), 0)
-            points.add(point)
-
-        if points.count % 2 != 0:
-            breakpoint = int((points.count - 1) / 2) - 1
-        else:
-            breakpoint = int((points.count) / 2) - 1
-
-        breakline = sketchChamber.sketchCurves.sketchLines.addByTwoPoints(
-            adsk.core.Point3D.create(0, 0, 0), adsk.core.Point3D.create(0.2, 0, 0)
-        )
-        normal = sketchChamber.sketchCurves.sketchFittedSplines.add(points)
-        normal.isClosed = False
-
-        splines = normal.breakCurve(points.item(breakpoint))
-
-        splines.item(1).addFitPoint(0.99999)
-        sketchChamber.geometricConstraints.addCoincident(
-            splines.item(1).endSketchPoint, splines.item(0).startSketchPoint
-        )
-
-        rootlength = 1
-
-        x_verteilung = cos_verteilung(int(ipoints * 0.5), rootlength)
-
-        O = []
-        U = []
-
-        for i in range(1, len(x_verteilung) - 1):
-            collLines = adsk.core.ObjectCollection.create()
-            pu = adsk.core.Point3D.create(float(x_verteilung[i]), -10, 0)
-            po = adsk.core.Point3D.create(float(x_verteilung[i]), 10, 0)
-            line = sketchChamber.sketchCurves.sketchLines.addByTwoPoints(pu, po)
-            collLines.add(line)
-            O.append(splines.item(0).intersections(collLines)[2][0].asArray())
-            U.append(splines.item(1).intersections(collLines)[2][0].asArray())
-            line.deleteMe()
-
-        scaledO = [(O[i][0] / rootlength, O[i][1] / rootlength) for i in range(len(O) - 1)]
-        scaledO.append((1, 0))
-        scaledU = [(U[i][0] / rootlength, U[i][1] / rootlength) for i in range(len(U) - 1)]  # test negiert
-        scaledU.append((1, 0))
-        chamber = [(scaledO[i][0], (scaledO[i][1] + scaledU[i][1]) * 0.5, 0) for i in range(len(scaledO))]
-
-        thickO = [
-            (chamber[i][0], (factor * (scaledO[i][1] - chamber[i][1])) + chamber[i][1], 0) for i in range(len(chamber))
-        ]
-        thickU = [
-            (chamber[i][0], (factor * (scaledU[i][1] - chamber[i][1])) + chamber[i][1], 0) for i in range(len(chamber))
-        ]
-
-        origin = [(0, 0)]
-        chamber_line = [(0, 0, 0)] + chamber
-
-        thicked = list(reversed(thickO)) + list(origin) + list(thickU)
-        thickedO = list(reversed(thickO)) + list(origin)
-        thickedU = list(thickU)
-
-        self.top_coords = thickedO
-        self.bottom_coords = thickedU
-
-        sketchChamber.deleteMe()
