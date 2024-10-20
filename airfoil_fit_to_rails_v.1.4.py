@@ -33,9 +33,10 @@ T01_TEXTBOX_ID = "Datei eingelesen"
 
 _handlers = []
 _user_parameters = {}
-_name = []
 
-global airfoildata, profile, top_coords, bottom_coords, name, filename
+global airfoildata, profile, name, filename
+
+filename = ""
 
 ui = None
 app = adsk.core.Application.get()
@@ -98,13 +99,13 @@ class FoilCommandInputChangedHandler(adsk.core.InputChangedEventHandler):
 
             # onInputChange for click Button
             if cmdInput.id == B1_BUTTON_ID:
-                #global _name
+                # global _name
                 filename = get_input_filename()
                 name = get_name(filename)
                 airfoildata = AirfoilReadData(filename, name)
                 airfoildata.get_profile()
                 profile = list(airfoildata.profile)
-                inputs.itemById(T01_TEXTBOX_ID).isVisible = False               
+                inputs.itemById(T01_TEXTBOX_ID).isVisible = False
                 test = inputs.itemById(T01_TEXTBOX_ID).parentCommandInput.children
                 test.addTextBoxCommandInput("Proil eingelesen", name, "eingelesen!", 1, True)
                 test[-2].isVisible = False
@@ -123,7 +124,7 @@ class FoilCommandExecuteHandler(adsk.core.CommandEventHandler):
             inputs = command.commandInputs
 
             try:
-
+                global filename
                 entities_nose = []
                 entities_tail = []
 
@@ -139,6 +140,9 @@ class FoilCommandExecuteHandler(adsk.core.CommandEventHandler):
                     # args.isValidResult = False
                 if inputs.itemById(SE02_SELECTION_INPUT_ID).selection(0).isValid == True:
                     pass
+                if filename == "":
+                    ui.messageBox("Keine Dat-Datei geladen!")
+                
                 else:
                     ui.messageBox("Plane not selected!")
                     # args.isValidResult = False
@@ -403,7 +407,9 @@ class FoilCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             inputs.itemById(T00_TEXTBOX_ID).isVisible = False  # löschen
             inputs.itemById(T01_TEXTBOX_ID).isVisible = True
 
-            groupCmdInput1 = tab1ChildInputs.addGroupCommandInput("group1", "Auswahl der Splines und Projektionsebene:")
+            groupCmdInput1 = tab1ChildInputs.addGroupCommandInput(
+                "group1", "Auswahl der Splines und Projektionsebene:"
+            )
             groupCmdInput1.isExpanded = True
             groupCmdInput1.isEnabledCheckBoxDisplayed = False
             groupChildInputs1 = groupCmdInput1.children
@@ -488,6 +494,7 @@ class FoilCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             if ui:
                 ui.messageBox("Failed:\n{}".format(traceback.format_exc()))
 
+
 class AirfoilReadData:
 
     def __init__(self, filename, name):
@@ -544,8 +551,6 @@ class AirfoilData:
         self.bottom_coords = []
         self.info = []
 
-
-
     def thickness(self):
 
         temp = [(self.profile[i][0], self.aufdickung * self.profile[i][1]) for i in range(len(self.profile))]
@@ -591,9 +596,9 @@ class AirfoilData:
         self.normalize()
 
     def coords_split_move(self):
-        
+
         self.thickness()
-        
+
         x_values, y_values = map(list, zip(*self.profile))
 
         # check if x min is (0, 0) otherwise move to origin, derotate and normalize, if it is not sth like s3002
@@ -701,6 +706,7 @@ class AirfoilData:
         self.top_coords = coordsOn
         self.bottom_coords = coordsUn
 
+
 class AirfoilSketch:
     def create_sketch(
         self,
@@ -716,13 +722,12 @@ class AirfoilSketch:
         dicke,
     ):
         global profile, filename
-        
-        #if dicke != 1:
+
+        # if dicke != 1:
         airfoildata = AirfoilData(filename, name, profile, dicke)
         airfoildata.coords_split_move()
         coords_o = airfoildata.top_coords
         coords_u = airfoildata.bottom_coords
-        
 
         sketchT = sketches.add(planesel)
         try:
